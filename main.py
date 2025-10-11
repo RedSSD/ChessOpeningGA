@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Genetic Algorithm for optimizing chess opening sequences.
+"""
+
+import random
+import argparse
+import shutil
+
+import chess
+import chess.pgn
+import chess.engine
+
+from deap import base, creator, tools
+
+# GA parameters
+N_PLY = 6            # number of half-moves in an opening (e.g., 6 = 3 full moves for each side)
+POP_SIZE = 80
+N_GEN = 60
+CX_PROB = 0.7
+MUT_PROB = 0.2
+TOURN_SIZE = 3
+GENE_MAX = 255       # genes are integers in [0, GENE_MAX]
+
+# Fitness: maximize (positive evaluation means advantage for White)
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+toolbox = base.Toolbox()
+toolbox.register("gene", random.randint, 0, GENE_MAX)
+toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.gene, n=N_PLY)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+# Stockfish connection
+STOCKFISH_PATH = shutil.which("stockfish")
+ENGINE = None
+if STOCKFISH_PATH:
+    try:
+        ENGINE = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        print("Stockfish found:", STOCKFISH_PATH)
+    except Exception as e:
+        print("Could not start Stockfish:", e)
+        ENGINE = None
+else:
+    print("Stockfish not found — fallback to material evaluation.")
+
+# Simple material evaluation if no engine is available
+PIECE_VALUES = {
+    chess.PAWN: 1.0,
+    chess.KNIGHT: 3.0,
+    chess.BISHOP: 3.0,
+    chess.ROOK: 5.0,
+    chess.QUEEN: 9.0,
+    chess.KING: 0.0
+}
+
+def material_evaluation(board: chess.Board) -> float:
+    """
+    Return a simple material score (white - black) in centipawns.
+    THIS FUNCTION IS EXECUTED ONLY IF Stockfish IS NOT INSTALLED ON THE MACHINE.
+    """
+    score = 0.0
+    for piece_type, val in PIECE_VALUES.items():
+        score += val * (len(board.pieces(piece_type, chess.WHITE)) - len(board.pieces(piece_type, chess.BLACK)))
+    return score * 100.0
+
+def decode_individual(individual):
+    """
+    Decode an individual's genome into a sequence of chess moves.
+    Each gene corresponds to an index in the list of legal moves.
+    """
+    board = chess.Board()
+    moves = []
+    for gene in individual:
+        legal = list(board.legal_moves)
+        if not legal:
+            break
+        idx = gene % len(legal)
+        mv = legal[idx]
+        moves.append(mv)
+        board.push(mv)
+    return moves, board
+
+def evaluate(individual):
+    """
+    Evaluate the fitness of an individual.
+    If Stockfish is available, use it to evaluate the resulting position.
+    Otherwise, fallback to material evaluation.
+    """
+    moves, board = decode_individual(individual)
+    if ENGINE is not None:
+        try:
+            info = ENGINE.analyse(board, chess.engine.Limit(depth=10))
+            score = info.get("score")
+            if score.is_mate():
+                mate = score.white().mate()
+                fitness = 100000.0 if mate and mate > 0 else -100000.0
+            else:
+                fitness = float(score.white().score())
+        except Exception as e:
+            fitness = material_evaluation(board)
+    else:
+        fitness = material_evaluation(board)
+    return (fitness,)
+
+# Register DEAP operators
+toolbox.register("evaluate", evaluate)
+toolbox.register("mate", tools.cxTwoPoint)
+toolbox.register("mutate", tools.mutUniformInt, low=0, up=GENE_MAX, indpb=0.2)
+toolbox.register("select", tools.selTournament, tournsize=TOURN_SIZE)
+
+def individual_to_san(individual):
+    """Convert an individual into SAN (Standard Algebraic Notation) move sequence."""
+    moves, _ = decode_individual(individual)
+    b = chess.Board()
+    san_list = []
+    uci_list = []
+    for mv in moves:
+        san_list.append(b.san(mv))
+        uci_list.append(mv.uci())
+        b.push(mv)
+    return san_list, uci_list
+
+def main(pop_size=POP_SIZE, n_gen=N_GEN, cxpb=CX_PROB, mutpb=MUT_PROB, seed=None):
+    if seed is not None:
+        random.seed(seed)
+
+    pop = toolbox.population(n=pop_size)
+
+    hof = tools.HallOfFame(5)
+    stats = tools.Statistics(lambda ind: ind.fitness.values)
+    stats.register("avg", lambda fits: sum(f[0] for f in fits) / len(fits))
+    stats.register("min", lambda fits: min(f[0] for f in fits))
+    stats.register("max", lambda fits: max(f[0] for f in fits))
+
+    # Initial evaluation
+    fitnesses = list(map(toolbox.evaluate, pop))
+    for ind, fit in zip(pop, fitnesses):
+        ind.fitness.values = fit
+
+    for gen in range(1, n_gen + 1):
+        # Selection
+        offspring = toolbox.select(pop, len(pop))
+        offspring = list(map(toolbox.clone, offspring))
+
+        # Crossover
+        for child1, child2 in zip(offspring[::2], offspring[1::2]):
+            if random.random() < cxpb:
+                toolbox.mate(child1, child2)
+                del child1.fitness.values
+                del child2.fitness.values
+
+        # Mutation
+        for mutant in offspring:
+            if random.random() < mutpb:
+                toolbox.mutate(mutant)
+                del mutant.fitness.values
+
+        # Evaluate offspring
+        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        fitnesses = list(map(toolbox.evaluate, invalid_ind))
+        for ind, fit in zip(invalid_ind, fitnesses):
+            ind.fitness.values = fit
+
+        pop[:] = offspring
+
+        hof.update(pop)
+        record = stats.compile(pop)
+        print(f"Gen {gen:3d}: size={len(pop)}  avg={record['avg']:.1f}  max={record['max']:.1f}  min={record['min']:.1f}")
+
+    # Results
+    print("\n=== Best opening sequences found (Top 5) ===")
+    for i, ind in enumerate(hof):
+        san, uci = individual_to_san(ind)
+        fit = ind.fitness.values[0]
+        print(f"\n#{i+1} fitness={fit:.1f}")
+        print("SAN:", " ".join(san))
+        print("UCI:", " ".join(uci))
+
+    if ENGINE is not None:
+        ENGINE.quit()
+
+    return pop, hof
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="GA for optimizing chess openings")
+    parser.add_argument("--pop", type=int, default=POP_SIZE)
+    parser.add_argument("--gen", type=int, default=N_GEN)
+    parser.add_argument("--seed", type=int, default=None)
+    args = parser.parse_args()
+    main(pop_size=args.pop, n_gen=args.gen, seed=args.seed)
