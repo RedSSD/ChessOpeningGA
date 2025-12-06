@@ -72,8 +72,8 @@ PIECE_VALUES = {
     chess.KING: 0.0
 }
 
-TELEGRAM_BOT_TOKEN = "7939757093:AAFNAOdipE_t0tYftgHQX0kkC-jPKp1sxsg"
-TELEGRAM_CHAT_ID = "625577497"
+TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_CHAT_ID = ""
 def notify_telegram(message: str):
     """Send a message to your Telegram chat."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
