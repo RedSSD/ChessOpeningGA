@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------
 # GA parameters
 # ------------------------------------------------------
-N_PLY = 6            # number of white moves (Stockfish replies automatically)
-POP_SIZE = 80
-N_GEN = 60
+N_PLY = 8            # number of white moves (Stockfish replies automatically)
+POP_SIZE = 120
+N_GEN = 80
 CX_PROB = 0.7
 MUT_PROB = 0.2
 TOURN_SIZE = 3
@@ -72,8 +72,8 @@ PIECE_VALUES = {
     chess.KING: 0.0
 }
 
-TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_BOT_TOKEN = "7939757093:AAFNAOdipE_t0tYftgHQX0kkC-jPKp1sxsg"
+TELEGRAM_CHAT_ID = "625577497"
 def notify_telegram(message: str):
     """Send a message to your Telegram chat."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -166,7 +166,7 @@ def evaluate(individual):
 
         if ENGINE is not None:
             try:
-                info = ENGINE.analyse(board, chess.engine.Limit(depth=10))
+                info = ENGINE.analyse(board, chess.engine.Limit(depth=4))
                 score = info.get("score")
 
                 if score.is_mate():
@@ -207,6 +207,8 @@ def main(pop_size=POP_SIZE, n_gen=N_GEN, seed=None):
     stats.register("avg", lambda fits: sum(f[0] for f in fits) / len(fits))
     stats.register("min", lambda fits: min(f[0] for f in fits))
     stats.register("max", lambda fits: max(f[0] for f in fits))
+    
+    logger.info(f"N_PLY: {N_PLY}, POP_SIZE: {POP_SIZE}, N_GEN: {N_GEN}, depth: 10")
 
     # Initial evaluation
     for ind in pop:
@@ -288,4 +290,5 @@ if __name__ == "__main__":
     parser.add_argument("--gen", type=int, default=N_GEN)
     parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
+    notify_telegram("Starting GA")
     main(pop_size=args.pop, n_gen=args.gen, seed=args.seed)
